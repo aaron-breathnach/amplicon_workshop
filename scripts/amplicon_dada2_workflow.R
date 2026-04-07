@@ -1,7 +1,8 @@
 #########################################
-# Amplicon sequencing analysis workshop #
-# Pipeline: DADA2 + phyloseq            #
-# Participant-facing teaching script    #
+# Amplicon sequencing analysis workshop
+#
+# Pipeline: DADA2 + phyloseq
+# Participant-facing teaching script
 #########################################
 
 # 0. Install packages (run once only)
@@ -11,7 +12,7 @@ if (!requireNamespace("BiocManager", quietly = TRUE)) {
 
 # Uncomment if needed
 # BiocManager::install(c("dada2", "phyloseq", "Biostrings"))
-# install.packages(c("ggplot2", "dplyr", "readr", "tibble"))
+# install.packages(c("ggplot2", "dplyr", "readr", "tibble", "stringr", "tidyr"))
 
 # 1. Load libraries
 library(dada2)
@@ -21,6 +22,11 @@ library(ggplot2)
 library(dplyr)
 library(readr)
 library(tibble)
+library(stringr)
+library(tidyr)
+
+# create a directory for output files
+dir.create("results", showWarnings = FALSE)
 
 # 2. Define input files
 path <- "data/fastq"
@@ -43,75 +49,136 @@ fnRs <- sort(
   )
 )
 
-## check if we have the same number of forward and reverse reads
+## stop early if no FASTQ files are found
+if (length(fnFs) == 0 || length(fnRs) == 0) {
+  stop("No FASTQ files found in data/fastq. Check that the files are in the correct folder.")
+}
+
+## check that we have the same number of forward and reverse read files
 stopifnot(length(fnFs) == length(fnRs))
 
-## extract sample IDs from the forward file name
+## read the first four lines of a fastq file
+readLines(gzfile(fnFs[1]), n = 4)
+
+## extract sample IDs from the forward read file names
 sample.names <- basename(fnFs) |>
   str_replace("_L001_R1_001.fastq.gz$", "")
 
-## extract sample IDs from the reverse file name
+## extract sample IDs from the reverse read file names
 sample.names.r <- basename(fnRs) |>
   str_replace("_L001_R2_001.fastq.gz$", "")
 
 ## check that forward and reverse files correspond to the same samples
 stopifnot(all(sample.names == sample.names.r))
 
+saveRDS(
+  list(
+    fnFs = fnFs,
+    fnRs = fnRs,
+    sample.names = sample.names
+  ),
+  "results/checkpoint_01_input_files.rds"
+)
+
 # 3. Inspect quality
 plotQualityProfile(fnFs[1:2])
 plotQualityProfile(fnRs[1:2])
 
 # 4. Filter and trim
-
 ## create a directory to write the filtered reads to
 filt_path <- file.path(path, "filtered")
 dir.create(filt_path, showWarnings = FALSE)
 
 ## names for the filtered forward reads
 filtFs <- file.path(filt_path, paste0(sample.names, "_F_filt.fastq.gz"))
+
 ## names for the filtered reverse reads
 filtRs <- file.path(filt_path, paste0(sample.names, "_R_filt.fastq.gz"))
 
+## remove low-quality reads and trim low-quality tails
 out <- filterAndTrim(
-  fwd = fnFs,             # forward reads
-  filt = filtFs,          # output filtered forward reads
-  rev = fnRs,             # reverse reads
-  filt.rev = filtRs,      # output filtered reverse reads
-  
-  truncLen = c(240, 160), # truncate reads at these positions (F, R)
-  maxEE = c(2, 2),        # maximum expected errors (quality filter)
-  truncQ = 2,             # truncate at first low-quality base
-  
-  rm.phix = TRUE,         # remove PhiX contamination
+  fwd = fnFs,            # forward reads
+  filt = filtFs,         # output filtered forward reads
+  rev = fnRs,            # reverse reads
+  filt.rev = filtRs,     # output filtered reverse reads
+  truncLen = c(240, 160),# truncate reads at these positions (F, R)
+  maxEE = c(2, 2),       # maximum expected errors
+  truncQ = 2,            # truncate at the first very low-quality base
+  rm.phix = TRUE,        # remove PhiX reads
   compress = TRUE,
-  multithread = TRUE      # use multiple cores
+  multithread = TRUE     # use multiple CPU cores
 )
 
 out_df <- as.data.frame(out) |>
   rownames_to_column("sample")
 
+saveRDS(
+  list(
+    filtFs = filtFs,
+    filtRs = filtRs,
+    out = out,
+    out_df = out_df,
+    sample.names = sample.names
+  ),
+  "results/checkpoint_02_filtered_reads.rds"
+)
+
 # 5. Learn error rates
-
-## note: for more info, see https://benjjneb.github.io/dada2/tutorial.html
-
+## DADA2 learns the sequencing error profile from the data
 errF <- learnErrors(filtFs, multithread = TRUE)
 errR <- learnErrors(filtRs, multithread = TRUE)
+
+saveRDS(
+  list(
+    errF = errF,
+    errR = errR,
+    filtFs = filtFs,
+    filtRs = filtRs,
+    sample.names = sample.names
+  ),
+  "results/checkpoint_03_error_models.rds"
+)
 
 plotErrors(errF, nominalQ = TRUE)
 plotErrors(errR, nominalQ = TRUE)
 
 # 6. Dereplicate reads
+## collapse identical reads together to speed up computation
 derepFs <- derepFastq(filtFs)
 derepRs <- derepFastq(filtRs)
 
 names(derepFs) <- sample.names
 names(derepRs) <- sample.names
 
+saveRDS(
+  list(
+    derepFs = derepFs,
+    derepRs = derepRs,
+    errF = errF,
+    errR = errR,
+    sample.names = sample.names
+  ),
+  "results/checkpoint_04_derep.rds"
+)
+
 # 7. Infer ASVs
+## infer true biological sequences from the error model
 dadaFs <- dada(derepFs, err = errF, multithread = TRUE)
 dadaRs <- dada(derepRs, err = errR, multithread = TRUE)
 
+saveRDS(
+  list(
+    dadaFs = dadaFs,
+    dadaRs = dadaRs,
+    derepFs = derepFs,
+    derepRs = derepRs,
+    sample.names = sample.names
+  ),
+  "results/checkpoint_05_dada_objects.rds"
+)
+
 # 8. Merge pairs
+## merge forward and reverse reads for each sample
 mergers <- mergePairs(
   dadaF = dadaFs,
   derepF = derepFs,
@@ -120,9 +187,20 @@ mergers <- mergePairs(
 )
 
 # 9. Construct sequence table
+## rows = samples, columns = ASVs
 seqtab <- makeSequenceTable(mergers)
 
+saveRDS(
+  list(
+    mergers = mergers,
+    seqtab = seqtab,
+    sample.names = sample.names
+  ),
+  "results/checkpoint_06_seqtab.rds"
+)
+
 # 10. Remove chimeras
+## remove PCR artefacts
 seqtab.nochim <- removeBimeraDenovo(
   seqtab,
   method = "consensus",
@@ -130,6 +208,7 @@ seqtab.nochim <- removeBimeraDenovo(
 )
 
 # 11. Track read retention
+## useful for seeing where reads are lost during processing
 getN <- function(x) sum(getUniques(x))
 
 track <- cbind(
@@ -142,19 +221,26 @@ track <- cbind(
 )
 
 rownames(track) <- sample.names
+
 track_df <- as.data.frame(track) |>
   rownames_to_column("sample")
 
 write_csv(track_df, "results/read_tracking.csv")
 
+saveRDS(
+  list(
+    seqtab = seqtab,
+    seqtab.nochim = seqtab.nochim,
+    track = track,
+    track_df = track_df,
+    sample.names = sample.names
+  ),
+  "results/checkpoint_07_nochim.rds"
+)
+
 # 12. Assign taxonomy
-
-## download the reference database from SILVA
-
+## use a SILVA training set downloaded in advance
 silva_ref <- "reference/silva_nr99_v138.2_toGenus_trainset.fa.gz"
-
-url <- "https://www.arb-silva.de/fileadmin/silva_databases/current/DADA2/1.36.0/SSU/silva_nr99_v138.2_toGenus_trainset.fa.gz"
-if (!file.exists(silva_ref)) download.file(url, silva_ref)
 
 tax <- assignTaxonomy(
   seqtab.nochim,
@@ -163,8 +249,10 @@ tax <- assignTaxonomy(
 )
 
 # 13. Rename ASVs for readability
+## shorter ASV names are easier to read in plots and tables
 asv.seqs <- colnames(seqtab.nochim)
 asv.headers <- paste0("ASV", seq_along(asv.seqs))
+
 colnames(seqtab.nochim) <- asv.headers
 rownames(tax) <- asv.headers
 
@@ -173,12 +261,28 @@ asv_lookup <- tibble(
   Sequence = asv.seqs
 )
 
+saveRDS(
+  list(
+    seqtab.nochim = seqtab.nochim,
+    tax = tax,
+    asv_lookup = asv_lookup
+  ),
+  "results/checkpoint_08_taxonomy_assigned.rds"
+)
+
 write_csv(asv_lookup, "results/asv_lookup.csv")
-write_csv(as.data.frame(tax) |> rownames_to_column("ASV"), "results/taxonomy_table.csv")
-write_csv(as.data.frame(seqtab.nochim) |> rownames_to_column("sample"), "results/asv_count_table.csv")
+
+write_csv(
+  as.data.frame(tax) |> rownames_to_column("ASV"),
+  "results/taxonomy_table.csv"
+)
+
+write_csv(
+  as.data.frame(seqtab.nochim) |> rownames_to_column("sample"),
+  "results/asv_count_table.csv"
+)
 
 # 14. Import metadata
-
 metadata <- read_csv("data/metadata.csv")
 
 metadata_df <- metadata |>
@@ -186,9 +290,23 @@ metadata_df <- metadata |>
 
 rownames(metadata_df) <- metadata_df[, 1]
 metadata_df <- metadata_df[, -1, drop = FALSE]
+
+## check that all sequence-table samples are present in metadata
+stopifnot(all(rownames(seqtab.nochim) %in% rownames(metadata_df)))
+
+## reorder metadata so it matches the sequence table
 metadata_df <- metadata_df[rownames(seqtab.nochim), , drop = FALSE]
 
+saveRDS(
+  list(
+    metadata = metadata,
+    metadata_df = metadata_df
+  ),
+  "results/checkpoint_09_metadata_aligned.rds"
+)
+
 # 15. Create phyloseq object
+## combine counts, taxonomy, and metadata into one object
 ps <- phyloseq(
   otu_table(seqtab.nochim, taxa_are_rows = FALSE),
   tax_table(as.matrix(tax)),
@@ -198,12 +316,6 @@ ps <- phyloseq(
 saveRDS(ps, "results/phyloseq_object.rds")
 
 # 16. Basic downstream analysis
-
-meta <- as.data.frame(sample_data(ps))
-meta$SampleID <- rownames(meta)
-
-# 16. Basic downstream analysis
-
 meta <- as.data.frame(sample_data(ps))
 meta$SampleID <- rownames(meta)
 
@@ -216,13 +328,13 @@ richness <- estimate_richness(ps, measures = c("Shannon", "Simpson"))
 richness$SampleID <- rownames(richness)
 
 ## convert to long format for plotting
-richness <- inner_join(richness, meta, by = "SampleID") %>%
-  pivot_longer(!c(SampleID, time))
+richness <- inner_join(richness, meta, by = "SampleID") |>
+  pivot_longer(cols = -c(SampleID, time), names_to = "name", values_to = "value")
 
 ## visualise alpha diversity
 ggplot(richness, aes(x = time, y = value)) +
   facet_wrap(~ name, scales = "free") +
-  geom_boxplot(aes(colour = time)) +
+  geom_boxplot(aes(fill = time)) +
   theme_bw()
 
 ## beta diversity analysis
