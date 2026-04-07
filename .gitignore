@@ -2,9 +2,4 @@
 .RData
 .Rproj.user/
 *.Rproj
-results/*
-!results/.gitkeep
-reference/*.fa
-reference/*.fa.gz
-reference/*.fasta
-reference/*.fasta.gz
+reference/*
