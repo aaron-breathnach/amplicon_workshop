@@ -71,15 +71,6 @@ sample.names.r <- basename(fnRs) |>
 ## check that forward and reverse files correspond to the same samples
 stopifnot(all(sample.names == sample.names.r))
 
-saveRDS(
-  list(
-    fnFs = fnFs,
-    fnRs = fnRs,
-    sample.names = sample.names
-  ),
-  "results/checkpoint_01_input_files.rds"
-)
-
 # 3. Inspect quality
 plotQualityProfile(fnFs[1:2])
 plotQualityProfile(fnRs[1:2])
@@ -97,47 +88,25 @@ filtRs <- file.path(filt_path, paste0(sample.names, "_R_filt.fastq.gz"))
 
 ## remove low-quality reads and trim low-quality tails
 out <- filterAndTrim(
-  fwd = fnFs,            # forward reads
-  filt = filtFs,         # output filtered forward reads
-  rev = fnRs,            # reverse reads
-  filt.rev = filtRs,     # output filtered reverse reads
-  truncLen = c(240, 160),# truncate reads at these positions (F, R)
-  maxEE = c(2, 2),       # maximum expected errors
-  truncQ = 2,            # truncate at the first very low-quality base
-  rm.phix = TRUE,        # remove PhiX reads
+  fwd = fnFs,             # forward reads
+  filt = filtFs,          # output filtered forward reads
+  rev = fnRs,             # reverse reads
+  filt.rev = filtRs,      # output filtered reverse reads
+  truncLen = c(240, 160), # truncate reads at these positions (F, R)
+  maxEE = c(2, 2),        # maximum expected errors
+  truncQ = 2,             # truncate at the first very low-quality base
+  rm.phix = TRUE,         # remove PhiX reads
   compress = TRUE,
-  multithread = TRUE     # use multiple CPU cores
+  multithread = TRUE      # use multiple CPU cores
 )
 
 out_df <- as.data.frame(out) |>
   rownames_to_column("sample")
 
-saveRDS(
-  list(
-    filtFs = filtFs,
-    filtRs = filtRs,
-    out = out,
-    out_df = out_df,
-    sample.names = sample.names
-  ),
-  "results/checkpoint_02_filtered_reads.rds"
-)
-
 # 5. Learn error rates
 ## DADA2 learns the sequencing error profile from the data
 errF <- learnErrors(filtFs, multithread = TRUE)
 errR <- learnErrors(filtRs, multithread = TRUE)
-
-saveRDS(
-  list(
-    errF = errF,
-    errR = errR,
-    filtFs = filtFs,
-    filtRs = filtRs,
-    sample.names = sample.names
-  ),
-  "results/checkpoint_03_error_models.rds"
-)
 
 plotErrors(errF, nominalQ = TRUE)
 plotErrors(errR, nominalQ = TRUE)
@@ -150,32 +119,10 @@ derepRs <- derepFastq(filtRs)
 names(derepFs) <- sample.names
 names(derepRs) <- sample.names
 
-saveRDS(
-  list(
-    derepFs = derepFs,
-    derepRs = derepRs,
-    errF = errF,
-    errR = errR,
-    sample.names = sample.names
-  ),
-  "results/checkpoint_04_derep.rds"
-)
-
 # 7. Infer ASVs
 ## infer true biological sequences from the error model
 dadaFs <- dada(derepFs, err = errF, multithread = TRUE)
 dadaRs <- dada(derepRs, err = errR, multithread = TRUE)
-
-saveRDS(
-  list(
-    dadaFs = dadaFs,
-    dadaRs = dadaRs,
-    derepFs = derepFs,
-    derepRs = derepRs,
-    sample.names = sample.names
-  ),
-  "results/checkpoint_05_dada_objects.rds"
-)
 
 # 8. Merge pairs
 ## merge forward and reverse reads for each sample
@@ -190,17 +137,8 @@ mergers <- mergePairs(
 ## rows = samples, columns = ASVs
 seqtab <- makeSequenceTable(mergers)
 
-saveRDS(
-  list(
-    mergers = mergers,
-    seqtab = seqtab,
-    sample.names = sample.names
-  ),
-  "results/checkpoint_06_seqtab.rds"
-)
-
 # 10. Remove chimeras
-## remove PCR artefacts
+## remove chimeras (PCR artefacts that can inflate diversity)
 seqtab.nochim <- removeBimeraDenovo(
   seqtab,
   method = "consensus",
@@ -227,20 +165,11 @@ track_df <- as.data.frame(track) |>
 
 write_csv(track_df, "results/read_tracking.csv")
 
-saveRDS(
-  list(
-    seqtab = seqtab,
-    seqtab.nochim = seqtab.nochim,
-    track = track,
-    track_df = track_df,
-    sample.names = sample.names
-  ),
-  "results/checkpoint_07_nochim.rds"
-)
-
 # 12. Assign taxonomy
 ## use a SILVA training set downloaded in advance
 silva_ref <- "reference/silva_nr99_v138.2_toGenus_trainset.fa.gz"
+
+stopifnot(file.exists(silva_ref))
 
 tax <- assignTaxonomy(
   seqtab.nochim,
@@ -259,15 +188,6 @@ rownames(tax) <- asv.headers
 asv_lookup <- tibble(
   ASV = asv.headers,
   Sequence = asv.seqs
-)
-
-saveRDS(
-  list(
-    seqtab.nochim = seqtab.nochim,
-    tax = tax,
-    asv_lookup = asv_lookup
-  ),
-  "results/checkpoint_08_taxonomy_assigned.rds"
 )
 
 write_csv(asv_lookup, "results/asv_lookup.csv")
@@ -296,14 +216,6 @@ stopifnot(all(rownames(seqtab.nochim) %in% rownames(metadata_df)))
 
 ## reorder metadata so it matches the sequence table
 metadata_df <- metadata_df[rownames(seqtab.nochim), , drop = FALSE]
-
-saveRDS(
-  list(
-    metadata = metadata,
-    metadata_df = metadata_df
-  ),
-  "results/checkpoint_09_metadata_aligned.rds"
-)
 
 # 15. Create phyloseq object
 ## combine counts, taxonomy, and metadata into one object
