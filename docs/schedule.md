@@ -1,7 +1,3 @@
-Here’s a clean, copy-paste friendly schedule you can drop straight into Word:
-
----
-
 # Amplicon Sequencing Workshop Schedule
 
 ## Morning
