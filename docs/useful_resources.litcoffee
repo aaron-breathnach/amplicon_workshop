@@ -53,7 +53,7 @@ This page contains useful links and resources for learning more about amplicon s
 - Alpha diversity metrics (e.g. Shannon, Simpson) can be compared between groups using standard statistical tests (e.g. Wilcoxon or linear models).
 - PERMANOVA (e.g. via `adonis2` in vegan) can be used to test for associations between metadata variables and overall microbiome composition (beta diversity).
   - Ordination methods (e.g. PCoA, NMDS) are commonly used to visualise differences in community structure.
-- MaAsLin 3 can be used to identify differentially abundant microbiome features while accounting for covariates.
+- [MaAsLin 3](https://github.com/biobakery/maaslin3) can be used to identify differentially abundant microbiome features while accounting for covariates.
   - Alternative approaches that account for compositionality include ANCOM-BC and ALDEx2.
 
 ---
